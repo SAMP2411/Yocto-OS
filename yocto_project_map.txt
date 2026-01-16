@@ -1,5 +1,5 @@
 ==========================================
- PROJECT SNAPSHOT: Sun Jan 11 10:40:45 PM CET 2026
+ PROJECT SNAPSHOT: Fri Jan 16 12:39:36 PM CET 2026
 ==========================================
 
 ### FILE: build/conf/local.conf ###
@@ -327,8 +327,17 @@ IMAGE_INSTALL:append = " u-boot-scr u-boot-fw-utils"
 IMAGE_INSTALL:append = " rauc my-rauc-config"
 IMAGE_INSTALL:append = " python3-core python3-modules python3-pip"
 IMAGE_INSTALL:append = " containerd-opencontainers runc-opencontainers curl wget iptables dbus"
+################################################
+# Add these for full container networking support
+IMAGE_INSTALL:append = " cni"
+# Ensure iptables and extra modules are in the image
+IMAGE_INSTALL:append = " iptables kernel-modules"
+################################################
 
 PACKAGE_EXCLUDE += "rauc-conf"
+#IMAGE_ROOTFS_EXTRA_SPACE = "204800"
+# Force the RootFS to 1GB to match the WKS file
+IMAGE_ROOTFS_SIZE = "1048576"
 IMAGE_ROOTFS_EXTRA_SPACE = "204800"
 
 #----------------------------------------------------------
@@ -346,7 +355,13 @@ configure_startup() {
     echo "/dev/vda4  /data  ext4    defaults        0       0" >> ${IMAGE_ROOTFS}/etc/fstab
     echo "proc       /proc  proc    defaults        0       0" >> ${IMAGE_ROOTFS}/etc/fstab
     echo "sysfs      /sys   sysfs   defaults        0       0" >> ${IMAGE_ROOTFS}/etc/fstab
+##############################################################################
+    RCS_FILE="${IMAGE_ROOTFS}/etc/init.d/rcS"
+    PROFILE_FILE="${IMAGE_ROOTFS}/etc/profile"
 
+    # This ensures every time you log in, /data/bin is searched for nerdctl
+    echo 'export PATH=$PATH:/data/bin' >> $PROFILE_FILE
+#####################################################################
     # 3. U-BOOT TOOLS CONFIG (Points to external memory)
     echo "/dev/vdb 0x0000 0x4000 0x4000" > ${IMAGE_ROOTFS}/etc/fw_env.config
 
@@ -391,8 +406,9 @@ configure_startup() {
 
     echo "::respawn:/usr/bin/dbus-daemon --system --nofork" >> ${IMAGE_ROOTFS}/etc/inittab 
     echo "::respawn:/usr/bin/rauc service" >> ${IMAGE_ROOTFS}/etc/inittab 
-    echo "::respawn:/usr/bin/ota-daemon.sh" >> ${IMAGE_ROOTFS}/etc/inittab
-    
+    #echo "::respawn:/usr/bin/ota-daemon.sh" >> ${IMAGE_ROOTFS}/etc/inittab
+    echo "/usr/bin/ota-daemon.sh > /var/log/ota.log 2>&1 &" >> $RCS_FILE    
+
     # START CONTAINERD (Mapped to /data for persistence)
     # Redirection to log file prevents serial console saturation
     echo "::respawn:/usr/bin/containerd --root /data/containerd/root --state /data/containerd/state > /var/log/containerd.log 2>&1" >> ${IMAGE_ROOTFS}/etc/inittab
@@ -481,7 +497,7 @@ S = "${WORKDIR}"
 # VERSION CONTROL
 # Change this number before building a new update bundle!
 # -----------------------------------------------------------
-OS_VERSION = "1"
+OS_VERSION = "2"
 
 do_install() {
     install -d ${D}${bindir}
@@ -809,28 +825,29 @@ do_configure:append() {
 --------------------------------------------------
 FILE: meta-custom-minimal/wic/rauc-disk.wks
 --------------------------------------------------
-# short-description: Create a RAUC-compatible dual-partition disk image
-
 # 1. Boot Partition (Fat32) - Holds Kernel & Boot Script
-part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 64
+part /boot --source bootimg-partition --ondisk vda --fstype=vfat --label boot --active --align 4096 --size 128
 
-# 2. Slot A (Ext4) - The Active OS
-part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfs_A --align 4096 --size 512
+# 2. Slot A (Ext4) - The Active OS (Updated to 1GB)
+part / --source rootfs --ondisk vda --fstype=ext4 --label rootfs_A --align 4096 --size 1024
 
-# 3. Slot B (Ext4) - The Backup/Update OS
-# We clone the rootfs here too so both slots start valid
-part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfs_B --align 4096 --size 512
+# 3. Slot B (Ext4) - The Backup OS (Updated to 1GB)
+part / --source rootfs --ondisk vda --fstype=ext4 --label rootfs_B --align 4096 --size 1024
 
-# 4. Data Partition (Ext4) - Persistent Data (Logs, Docker Images)
-part /data --ondisk mmcblk0 --fstype=ext4 --label data --align 4096 --size 512
+# 4. Data Partition (Ext4) - Persistent Data (Updated to 5GB)
+part /data --ondisk vda --fstype=ext4 --label data --align 4096 --size 5120
 
 
 ==========================================
  FOLDER STRUCTURE: sources
  (Content omitted for external layers)
 ==========================================
+meta-clang/
+meta-clang-revival/
 meta-openembedded/
+meta-python-ai/
 meta-rauc/
+meta-scipy/
 meta-virtualization/
 
 --- Inside meta-openembedded ---
