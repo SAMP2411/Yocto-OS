@@ -1,0 +1,849 @@
+==========================================
+ PROJECT SNAPSHOT: Sun Jan 11 10:40:45 PM CET 2026
+==========================================
+
+### FILE: build/conf/local.conf ###
+# MACHINE SETTINGS
+MACHINE = "qemuarm"
+DL_DIR ?= "${TOPDIR}/downloads"
+SSTATE_DIR ?= "${TOPDIR}/sstate-cache"
+
+# 1. CORE LIBRARY: MUSL
+TCLIBC = "musl"
+
+# 2. INIT SYSTEM: PURE BUSYBOX
+# Disable sysvinit and systemd completely
+INIT_MANAGER = "none"
+VIRTUAL-RUNTIME_init_manager = "busybox"
+VIRTUAL-RUNTIME_dev_manager = "busybox-mdev"
+VIRTUAL-RUNTIME_login_manager = "busybox"
+DISTRO_FEATURES:remove = "systemd sysvinit"
+
+# 3. OPTIMIZATION
+# Optimize for size (-Os)
+FULL_OPTIMIZATION = "-Os -pipe ${DEBUG_FLAGS}"
+
+# 4. SURGICAL STRIPPING
+# Hardware Stripping
+MACHINE_FEATURES:remove = "alsa screen vfat bluetooth wifi qemu-usermode"
+
+# Software Stripping (No Graphics, No X11, No OpenGL)
+DISTRO_FEATURES:remove = "x11 wayland opengl vulkan 3g nfc ptest multiarch wayland"
+DISTRO_FEATURES:remove = "nfs cifs smbfs"
+
+# Enable Virtualization features (required for containerd/runc)
+DISTRO_FEATURES:append = " virtualization"
+
+# Image Stripping (No package manager on device)
+IMAGE_FEATURES:remove = "package-management"
+
+# 5. DEPENDENCY STABILIZATION
+PACKAGECONFIG:remove:pn-util-linux = "cryptsetup bash-completion"
+PACKAGECONFIG:remove:pn-openssl = "perl"
+
+# 6. KERNEL PREFERENCE
+PREFERRED_PROVIDER_virtual/kernel = "linux-yocto"
+# Force only the primary serial console (removes hvc0)
+SERIAL_CONSOLES = "115200;ttyAMA0"
+
+# Allow root login without a password
+EXTRA_IMAGE_FEATURES += "debug-tweaks"
+
+# PREFERRED PROVIDERS FOR CONTAINERS
+PREFERRED_PROVIDER_virtual/runc = "runc-opencontainers"
+PREFERRED_PROVIDER_virtual/containerd = "containerd-opencontainers"
+
+# -------------------------------------------------
+# 💿 RAUC & BOOTLOADER CONFIGURATION
+# -------------------------------------------------
+
+# 1. Switch to U-Boot
+EXTRA_IMAGEDEPENDS += "u-boot"
+PREFERRED_PROVIDER_virtual/bootloader = "u-boot"
+
+# 2. Enable RAUC Distro Features
+DISTRO_FEATURES:append = " rauc"
+
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/conf/layer.conf
+--------------------------------------------------
+# We have a conf and classes directory, add to BBPATH
+BBPATH .= ":${LAYERDIR}"
+
+# We have recipes-* directories, add to BBFILES
+BBFILES += "${LAYERDIR}/recipes-*/*/*.bb \
+            ${LAYERDIR}/recipes-*/*/*.bbappend"
+
+BBFILE_COLLECTIONS += "meta-custom-minimal"
+BBFILE_PATTERN_meta-custom-minimal = "^${LAYERDIR}/"
+BBFILE_PRIORITY_meta-custom-minimal = "6"
+
+LAYERDEPENDS_meta-custom-minimal = "core"
+LAYERSERIES_COMPAT_meta-custom-minimal = "scarthgap"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/COPYING.MIT
+--------------------------------------------------
+Permission is hereby granted, free of charge, to any person obtaining a copy 
+of this software and associated documentation files (the "Software"), to deal 
+in the Software without restriction, including without limitation the rights 
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+copies of the Software, and to permit persons to whom the Software is 
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in 
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN 
+THE SOFTWARE.
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/README
+--------------------------------------------------
+This README file contains information on the contents of the meta-custom-minimal layer.
+
+Please see the corresponding sections below for details.
+
+Dependencies
+============
+
+  URI: <first dependency>
+  branch: <branch name>
+
+  URI: <second dependency>
+  branch: <branch name>
+
+  .
+  .
+  .
+
+Patches
+=======
+
+Please submit any patches against the meta-custom-minimal layer to the xxxx mailing list (xxxx@zzzz.org)
+and cc: the maintainer:
+
+Maintainer: XXX YYYYYY <xxx.yyyyyy@zzzzz.com>
+
+Table of Contents
+=================
+
+  I. Adding the meta-custom-minimal layer to your build
+ II. Misc
+
+
+I. Adding the meta-custom-minimal layer to your build
+=================================================
+
+Run 'bitbake-layers add-layer meta-custom-minimal'
+
+II. Misc
+========
+
+--- replace with specific information about the meta-custom-minimal layer ---
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-bsp/u-boot/files/env.cfg
+--------------------------------------------------
+CONFIG_ENV_IS_IN_FAT=y
+CONFIG_ENV_FAT_INTERFACE="virtio"
+CONFIG_ENV_FAT_DEVICE_AND_PART="0:1"
+CONFIG_ENV_FAT_FILE="uboot.env"
+CONFIG_ENV_SIZE=0x4000
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-bsp/u-boot-scr/files/boot.cmd
+--------------------------------------------------
+# RAUC Boot Script (zImage Version)
+test -n "${BOOT_ORDER}" || setenv BOOT_ORDER "A B"
+test -n "${BOOT_A_LEFT}" || setenv BOOT_A_LEFT 3
+test -n "${BOOT_B_LEFT}" || setenv BOOT_B_LEFT 3
+
+setenv bootargs_base "console=ttyAMA0,115200 rootwait panic=10"
+
+for slot in "${BOOT_ORDER}"; do
+  if test "x${slot}" = "xA"; then
+    if test ${BOOT_A_LEFT} -gt 0; then
+      echo "Found valid slot A..."
+      setenv bootargs "${bootargs_base} root=/dev/vda2"
+      # Load zImage instead of uImage
+      load virtio 0:1 ${kernel_addr_r} zImage
+      # Use bootz instead of bootm
+      bootz ${kernel_addr_r}
+    fi
+  fi
+  if test "x${slot}" = "xB"; then
+    if test ${BOOT_B_LEFT} -gt 0; then
+      echo "Found valid slot B..."
+      setenv bootargs "${bootargs_base} root=/dev/vda3"
+      load virtio 0:1 ${kernel_addr_r} zImage
+      bootz ${kernel_addr_r}
+    fi
+  fi
+done
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-bsp/u-boot-scr/u-boot-scr.bb
+--------------------------------------------------
+SUMMARY = "U-Boot Boot Script for RAUC"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+
+# 1. Inherit Deploy Class (MUST be at the top)
+inherit deploy
+
+# 2. Dependencies
+DEPENDS = "u-boot-tools-native"
+
+# 3. Source Config
+SRC_URI = "file://boot.cmd"
+
+# Set Source Directory to Work Directory (since boot.cmd is just a file)
+S = "${WORKDIR}"
+
+# 4. Compilation Task
+do_compile() {
+    mkimage -C none -A arm -T script -d ${WORKDIR}/boot.cmd ${WORKDIR}/boot.scr
+}
+
+# 5. Deployment Task (The critical fix)
+do_deploy() {
+    # We use -D to create the directory if missing
+    install -D -m 0644 ${WORKDIR}/boot.scr ${DEPLOYDIR}/boot.scr
+}
+
+# Ensure deploy runs after compile
+addtask deploy after do_compile before do_build
+
+# 6. Packaging (Optional, but good practice)
+do_install() {
+    install -d ${D}/boot
+    install -m 0644 ${WORKDIR}/boot.scr ${D}/boot/boot.scr
+}
+
+FILES:${PN} += "/boot/boot.scr"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-bsp/u-boot/u-boot_%.bbappend
+--------------------------------------------------
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+SRC_URI += "file://env.cfg"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/bundles/update-bundle.bb
+--------------------------------------------------
+SUMMARY = "RAUC Update Bundle"
+LICENSE = "MIT"
+
+inherit bundle
+
+# 1. Point to the Security Keys (Absolute Paths)
+RAUC_KEY_FILE = "/home/aathira/yocto_13_12/security/private.pem"
+RAUC_CERT_FILE = "/home/aathira/yocto_13_12/security/ca.cert.pem"
+
+# 2. Define what goes into the bundle
+RAUC_BUNDLE_COMPATIBLE = "MyCustomDevice"
+RAUC_BUNDLE_SLOTS = "rootfs" 
+
+# 3. Link to the actual Image
+RAUC_SLOT_rootfs = "my-minimal-image"
+RAUC_SLOT_rootfs[fstype] = "ext4"
+
+# 4. Ensure the image is built before bundling
+do_bundle[depends] += "my-minimal-image:do_image_complete"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/early-init/early-init.bb
+--------------------------------------------------
+SUMMARY = "Early Startup Environment Fixes"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+# We want this script to run as part of the standard BusyBox /etc/init.d/rcS startup process
+inherit update-rc.d
+
+SRC_URI = "file://early-startup.sh"
+
+INITSCRIPT_NAME = "early-startup.sh"
+# Ensure it starts very early (Priority 05)
+INITSCRIPT_PARAMS = "start 05 S ." 
+
+do_install() {
+    install -d ${D}${sysconfdir}/init.d
+    install -m 0755 ${WORKDIR}/early-startup.sh ${D}${sysconfdir}/init.d/
+}
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/early-init/files/early-startup.sh
+--------------------------------------------------
+#!/bin/sh
+# This script runs early during system startup (before inittab services)
+
+# 1. FIX: D-Bus socket directory creation (must exist in tmpfs /run)
+mkdir -p /run/dbus
+
+# 2. FIX: Mount Cgroup V2 for containerd/runc/modern services
+mount -t cgroup2 none /sys/fs/cgroup
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/images/my-minimal-image.bb
+--------------------------------------------------
+SUMMARY = "Final: Minimal Image + Atomic Update (RAUC) + Persistent Containers"
+LICENSE = "MIT"
+
+# -------------------------------------------------
+# 0. DISK LAYOUT AND OUTPUT FORMATS
+# -------------------------------------------------
+WKS_FILE = "rauc-disk.wks"
+IMAGE_FSTYPES = "ext4 wic"
+
+require recipes-core/images/core-image-minimal.bb
+
+# -------------------------------------------------
+# 1. BASE TOOLS & BOOT FILES
+# -------------------------------------------------
+IMAGE_INSTALL = "packagegroup-core-boot"
+IMAGE_BOOT_FILES = "zImage boot.scr"
+
+# Primary Applications and Services
+IMAGE_INSTALL:append = " system-monitor ota-client"
+IMAGE_INSTALL:append = " u-boot-scr u-boot-fw-utils"
+IMAGE_INSTALL:append = " rauc my-rauc-config"
+IMAGE_INSTALL:append = " python3-core python3-modules python3-pip"
+IMAGE_INSTALL:append = " containerd-opencontainers runc-opencontainers curl wget iptables dbus"
+
+PACKAGE_EXCLUDE += "rauc-conf"
+IMAGE_ROOTFS_EXTRA_SPACE = "204800"
+
+#----------------------------------------------------------
+# 🔧 FINAL WIRING: CONFIGURATION SCRIPT
+# ---------------------------------------------------------
+configure_startup() {
+    # 1. Base Structure
+    mkdir -p ${IMAGE_ROOTFS}/data
+    mkdir -p ${IMAGE_ROOTFS}/usr/bin
+
+    # 2. FSTAB: Configure partitions (vda4 is our persistent data)
+    echo "/dev/vda1  /boot  vfat    defaults        0       0" > ${IMAGE_ROOTFS}/etc/fstab
+    echo "/dev/vda2  /      ext4    defaults        0       1" >> ${IMAGE_ROOTFS}/etc/fstab
+    echo "/dev/vda3  none   swap    sw              0       0" >> ${IMAGE_ROOTFS}/etc/fstab
+    echo "/dev/vda4  /data  ext4    defaults        0       0" >> ${IMAGE_ROOTFS}/etc/fstab
+    echo "proc       /proc  proc    defaults        0       0" >> ${IMAGE_ROOTFS}/etc/fstab
+    echo "sysfs      /sys   sysfs   defaults        0       0" >> ${IMAGE_ROOTFS}/etc/fstab
+
+    # 3. U-BOOT TOOLS CONFIG (Points to external memory)
+    echo "/dev/vdb 0x0000 0x4000 0x4000" > ${IMAGE_ROOTFS}/etc/fw_env.config
+
+    # 4. SURGICAL INJECTION (Initialization Sequence)
+    RCS_FILE="${IMAGE_ROOTFS}/etc/init.d/rcS"
+    echo "" >> $RCS_FILE
+    echo "# --- START PERSISTENCE & TELEMETRY FIXES ---" >> $RCS_FILE
+    
+    # NEW: Mount Cgroup v2 (Essential for containerd/runc)
+    echo "mkdir -p /sys/fs/cgroup" >> $RCS_FILE
+    echo "mount -t cgroup2 none /sys/fs/cgroup" >> $RCS_FILE
+
+    # Fix DNS for Registry Pulls
+    echo "echo \"nameserver 10.0.2.3\" > /etc/resolv.conf" >> $RCS_FILE
+
+    # Create persistent directories on /data partition
+    echo "mkdir -p /data/rauc /data/containerd/root /data/containerd/state" >> $RCS_FILE
+    
+    # Clean up stale locks for DBus and Containerd
+    echo "mkdir -p /run/dbus /run/containerd" >> $RCS_FILE
+    echo "rm -f /run/dbus/pid /run/containerd/containerd.sock" >> $RCS_FILE
+
+    # Setup U-Boot Env template
+    echo "echo \"bootdelay=2\" > /etc/u-boot-initial-env" >> $RCS_FILE
+    echo "echo \"BOOT_ORDER=A B\" >> /etc/u-boot-initial-env" >> $RCS_FILE
+
+    # Start Telemetry Pipeline (Priority 1)
+    echo "/sbin/syslogd -n -R 10.0.2.2:5514 &" >> $RCS_FILE
+    echo "sleep 1" >> $RCS_FILE
+    echo "/usr/bin/system-monitor.sh &" >> $RCS_FILE
+
+    # Signal RAUC Boot Success
+    echo "( sleep 10 && rauc status mark-good ) &" >> $RCS_FILE
+    echo "# --- END FIXES ---" >> $RCS_FILE
+
+    # 5. Service Management (Inittab respawn loop)
+    # Clean previous lines to avoid duplication
+    sed -i '/dbus/d' ${IMAGE_ROOTFS}/etc/inittab
+    sed -i '/rauc/d' ${IMAGE_ROOTFS}/etc/inittab
+    sed -i '/ota-daemon/d' ${IMAGE_ROOTFS}/etc/inittab
+    sed -i '/containerd/d' ${IMAGE_ROOTFS}/etc/inittab
+
+    echo "::respawn:/usr/bin/dbus-daemon --system --nofork" >> ${IMAGE_ROOTFS}/etc/inittab 
+    echo "::respawn:/usr/bin/rauc service" >> ${IMAGE_ROOTFS}/etc/inittab 
+    echo "::respawn:/usr/bin/ota-daemon.sh" >> ${IMAGE_ROOTFS}/etc/inittab
+    
+    # START CONTAINERD (Mapped to /data for persistence)
+    # Redirection to log file prevents serial console saturation
+    echo "::respawn:/usr/bin/containerd --root /data/containerd/root --state /data/containerd/state > /var/log/containerd.log 2>&1" >> ${IMAGE_ROOTFS}/etc/inittab
+}
+
+ROOTFS_POSTPROCESS_COMMAND += "configure_startup; "
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/ota-client/files/ota-daemon.sh
+--------------------------------------------------
+#!/bin/sh
+
+SERVER_URL="http://10.0.2.2:8000"
+LOCAL_VER_FILE="/etc/image_version"
+REMOTE_VER_FILE="/tmp/remote_version"
+BUNDLE_URL="${SERVER_URL}/update-bundle-qemuarm.raucb"
+LOCAL_BUNDLE="/data/update.raucb"
+
+echo "OTA Daemon started. Monitoring ${SERVER_URL}..."
+
+while true; do
+    # 1. Clean up previous checks
+    rm -f ${REMOTE_VER_FILE}
+
+    # 2. Check current version
+    if [ -f "${LOCAL_VER_FILE}" ]; then
+        CURRENT_VER=$(cat ${LOCAL_VER_FILE})
+    else
+        CURRENT_VER="0"
+    fi
+
+    # 3. Fetch remote version
+    wget -q -O ${REMOTE_VER_FILE} "${SERVER_URL}/version.txt"
+
+    if [ $? -eq 0 ]; then
+        NEW_VER=$(cat ${REMOTE_VER_FILE})
+
+        # 4. Compare Versions
+        if [ "$NEW_VER" -gt "$CURRENT_VER" ]; then
+            echo "Update found! Current: ${CURRENT_VER}, New: ${NEW_VER}"
+
+            # --- FIX: DOWNLOAD FIRST (Avoids Streaming Errors) ---
+            echo "Downloading bundle to ${LOCAL_BUNDLE}..."
+            wget -O ${LOCAL_BUNDLE} "${BUNDLE_URL}"
+
+            if [ $? -eq 0 ]; then
+                echo "Download complete. Starting local installation..."
+                rauc install ${LOCAL_BUNDLE}
+
+                if [ $? -eq 0 ]; then
+                    echo "Installation successful. Rebooting in 5 seconds..."
+                    rm -f ${LOCAL_BUNDLE}
+                    sleep 5
+                    reboot
+                else
+                    echo "Installation failed. Will retry later."
+                fi
+            else
+                echo "Download failed."
+            fi
+        else
+            echo "System is up to date (Ver: ${CURRENT_VER})."
+        fi
+    else
+        echo "Could not reach update server."
+    fi
+
+    # Wait 60 seconds before next check
+    sleep 60
+done
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/ota-client/ota-client.bb
+--------------------------------------------------
+SUMMARY = "Simple OTA Update Daemon"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+
+SRC_URI = "file://ota-daemon.sh"
+
+S = "${WORKDIR}"
+
+# -----------------------------------------------------------
+# VERSION CONTROL
+# Change this number before building a new update bundle!
+# -----------------------------------------------------------
+OS_VERSION = "1"
+
+do_install() {
+    install -d ${D}${bindir}
+    install -m 0755 ota-daemon.sh ${D}${bindir}/ota-daemon.sh
+    
+    # Create the version file using the variable defined above
+    install -d ${D}${sysconfdir}
+    echo "${OS_VERSION}" > ${D}${sysconfdir}/image_version
+}
+
+FILES:${PN} += "${bindir}/ota-daemon.sh ${sysconfdir}/image_version"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/rauc-conf/files/ca.cert.pem
+--------------------------------------------------
+-----BEGIN CERTIFICATE-----
+MIIFKzCCAxOgAwIBAgIUMXef/RJbJQod4zekSuM4b0b6/5AwDQYJKoZIhvcNAQEL
+BQAwJTEjMCEGA1UEAwwaTXlDdXN0b21PUy1EZXZlbG9wbWVudC1LZXkwHhcNMjUx
+MjE1MTU0NTQzWhcNMzUxMjEzMTU0NTQzWjAlMSMwIQYDVQQDDBpNeUN1c3RvbU9T
+LURldmVsb3BtZW50LUtleTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIB
+AL/mq46EjjaAMSCLxVlmKwgI64+ZtIHBJsz2fGsNk+BOLFW12cNagi++S/4JI1K0
+JTXJQ12j+nmiqgBHk2uqnkRd+tRS2Wq9VMfIweklO8CLJliOjoLymDui1C0TiXBF
+pQP9Yxu2mDWKyoLb/BaoMXShRvgpVekyjD5S8gqPmcB/mizhzY3EKHqc4Dx11WzE
+nwzKzoWBVm1U1SoJuLwn3KwNlfg2DcE7vG0Ai0yOcgERhUa+5YySy4f5VN2x2Bpb
+fdYJ9TILzjRjTe507vFazvC5gUJJOqfgl3LqdmJr0GHFvqL7iCE0Yxj7jLaMJNgb
+UK/1TcfKwKTP8RLo1jZu0NGMf0z3L44ZqY430MBETgIBPCsynunsAt+8J1dJurZ5
+l41Jow6NsLTBJvy6/Ln7U+l6H/9iZ3vTlhqpeWw2kgCSgjxOSK6a9GZYIiHYCTDm
+pJQttxqlzDo34nklaw21OX26nDtZhO6o7E9JY+u+Ui2gF7LMywiXv8DrHxQDdOwr
+YNm3vF4IxjqCXJ9AleAVxU4RoTogi5NHeKC0ZSJUTcAPMyyo49jOSQaOUjjzJC2P
+NctQsiRO1TI/Cx0hQ6WTulSepaFtEeKtKHl00z9elQ7/4rd4qSOVQmO4ZoEacEcY
+DUH4ewTk7ZdZOMDJUCGafldE4XQU+TchspcJa6marLl9AgMBAAGjUzBRMB0GA1Ud
+DgQWBBT55jvFMqPYAjARrsITw+UJD4w32TAfBgNVHSMEGDAWgBT55jvFMqPYAjAR
+rsITw+UJD4w32TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4ICAQBs
+SZE6b9HQy0KoCka9MhwA/R9o1qj4wZi/P+IBztGHJGqNCY9oi2i4wSozg3Mzlu03
+NduvzyCvSejZ2cVfIGB5rfSR24+o5N8LF7WVOhkWoY44bwEz7kxYP59/bkz6FQK5
+fQMJuDKYdmwzsRtcT2YbZtgLG9Ve3EgxiEG32Zx0CKuYCU76k+nT2zh9fTenVeKH
+0nbYkqjUk1gHAYsFvV85cFXBu387KDKBN3Pmz/gm7X0458ljfkj2SGxyfqf/l17r
+6SOe42P2bPtcmX2OS3QfTEtaCSI874xnvTuACWOBlLePJyAMnQuW04I695Q5jup1
+zsX0ev2gm3Pwfs3Pi+dc5ZDPILECEuRJ1xK27O8MhnzRFiRRhjEkvw/w2QFEKP9o
+OprPcjVGXGtZX6xgs98mrGnc54AAvLLyXosJRSpui48skfnwWo4kaiQ8p8CybemT
+Nn1oXQnNGPDzCbzq+G83ibd9dnm+R4+9Jc1aVyJLJOdUPVAR11VaZZxIbD5/YJr4
+wtZlhAE2NpW6/6TP9GxeSuRjQeczk7tTzTcrspJQg4F9GJa7ludFXysWYKmIk2hq
+BNpN80TYvMpa/99gWBADgidx2JuwVJHDjFO3x0J9TPKAAteNkB+nTmDzSANUrROx
+2iWr7xaY2Wt4WLs5Kr9s03frl7ejKFXIaY5N8t0Cug==
+-----END CERTIFICATE-----
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/rauc-conf/files/system.conf
+--------------------------------------------------
+[system]
+compatible=MyCustomDevice
+bootloader=uboot
+
+[keyring]
+path=ca.cert.pem
+
+[slot.rootfs.0]
+device=/dev/vda2
+type=ext4
+bootname=A
+
+[slot.rootfs.1]
+device=/dev/vda3
+type=ext4
+bootname=B
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/rauc-conf/my-rauc-config.bb
+--------------------------------------------------
+SUMMARY = "My Custom RAUC System Configuration"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+
+# Set the Package Name (PN) explicitly to prevent naming conflicts
+PN = "my-rauc-config"
+
+SRC_URI = "file://system.conf \
+           file://ca.cert.pem"
+
+S = "${WORKDIR}"
+
+do_install() {
+    install -d ${D}${sysconfdir}/rauc
+    install -m 0644 ${WORKDIR}/system.conf ${D}${sysconfdir}/rauc/system.conf
+    
+    # Install the Keyring (Public Cert)
+    install -m 0644 ${WORKDIR}/ca.cert.pem ${D}${sysconfdir}/rauc/ca.cert.pem
+}
+
+FILES:${PN} += "${sysconfdir}/rauc/system.conf ${sysconfdir}/rauc/ca.cert.pem"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/rauc/files/ca.cert.pem
+--------------------------------------------------
+-----BEGIN CERTIFICATE-----
+MIIFKzCCAxOgAwIBAgIUMXef/RJbJQod4zekSuM4b0b6/5AwDQYJKoZIhvcNAQEL
+BQAwJTEjMCEGA1UEAwwaTXlDdXN0b21PUy1EZXZlbG9wbWVudC1LZXkwHhcNMjUx
+MjE1MTU0NTQzWhcNMzUxMjEzMTU0NTQzWjAlMSMwIQYDVQQDDBpNeUN1c3RvbU9T
+LURldmVsb3BtZW50LUtleTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIB
+AL/mq46EjjaAMSCLxVlmKwgI64+ZtIHBJsz2fGsNk+BOLFW12cNagi++S/4JI1K0
+JTXJQ12j+nmiqgBHk2uqnkRd+tRS2Wq9VMfIweklO8CLJliOjoLymDui1C0TiXBF
+pQP9Yxu2mDWKyoLb/BaoMXShRvgpVekyjD5S8gqPmcB/mizhzY3EKHqc4Dx11WzE
+nwzKzoWBVm1U1SoJuLwn3KwNlfg2DcE7vG0Ai0yOcgERhUa+5YySy4f5VN2x2Bpb
+fdYJ9TILzjRjTe507vFazvC5gUJJOqfgl3LqdmJr0GHFvqL7iCE0Yxj7jLaMJNgb
+UK/1TcfKwKTP8RLo1jZu0NGMf0z3L44ZqY430MBETgIBPCsynunsAt+8J1dJurZ5
+l41Jow6NsLTBJvy6/Ln7U+l6H/9iZ3vTlhqpeWw2kgCSgjxOSK6a9GZYIiHYCTDm
+pJQttxqlzDo34nklaw21OX26nDtZhO6o7E9JY+u+Ui2gF7LMywiXv8DrHxQDdOwr
+YNm3vF4IxjqCXJ9AleAVxU4RoTogi5NHeKC0ZSJUTcAPMyyo49jOSQaOUjjzJC2P
+NctQsiRO1TI/Cx0hQ6WTulSepaFtEeKtKHl00z9elQ7/4rd4qSOVQmO4ZoEacEcY
+DUH4ewTk7ZdZOMDJUCGafldE4XQU+TchspcJa6marLl9AgMBAAGjUzBRMB0GA1Ud
+DgQWBBT55jvFMqPYAjARrsITw+UJD4w32TAfBgNVHSMEGDAWgBT55jvFMqPYAjAR
+rsITw+UJD4w32TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4ICAQBs
+SZE6b9HQy0KoCka9MhwA/R9o1qj4wZi/P+IBztGHJGqNCY9oi2i4wSozg3Mzlu03
+NduvzyCvSejZ2cVfIGB5rfSR24+o5N8LF7WVOhkWoY44bwEz7kxYP59/bkz6FQK5
+fQMJuDKYdmwzsRtcT2YbZtgLG9Ve3EgxiEG32Zx0CKuYCU76k+nT2zh9fTenVeKH
+0nbYkqjUk1gHAYsFvV85cFXBu387KDKBN3Pmz/gm7X0458ljfkj2SGxyfqf/l17r
+6SOe42P2bPtcmX2OS3QfTEtaCSI874xnvTuACWOBlLePJyAMnQuW04I695Q5jup1
+zsX0ev2gm3Pwfs3Pi+dc5ZDPILECEuRJ1xK27O8MhnzRFiRRhjEkvw/w2QFEKP9o
+OprPcjVGXGtZX6xgs98mrGnc54AAvLLyXosJRSpui48skfnwWo4kaiQ8p8CybemT
+Nn1oXQnNGPDzCbzq+G83ibd9dnm+R4+9Jc1aVyJLJOdUPVAR11VaZZxIbD5/YJr4
+wtZlhAE2NpW6/6TP9GxeSuRjQeczk7tTzTcrspJQg4F9GJa7ludFXysWYKmIk2hq
+BNpN80TYvMpa/99gWBADgidx2JuwVJHDjFO3x0J9TPKAAteNkB+nTmDzSANUrROx
+2iWr7xaY2Wt4WLs5Kr9s03frl7ejKFXIaY5N8t0Cug==
+-----END CERTIFICATE-----
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/rauc/my-rauc-config.bb
+--------------------------------------------------
+SUMMARY = "RAUC configuration file"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+
+# Bump to r5 to force a clean overwrite
+PR = "r5"
+
+SRC_URI = "file://ca.cert.pem"
+
+S = "${WORKDIR}"
+
+do_install() {
+    install -d ${D}${sysconfdir}/rauc
+    
+    # 1. Generate the correct system.conf directly into the destination
+    cat <<EOF > ${D}${sysconfdir}/rauc/system.conf
+[system]
+compatible=MyCustomDevice
+bootloader=uboot
+mountprefix=/mnt/rauc
+data-directory=/data/rauc
+statusfile=/data/rauc/status
+
+[keyring]
+path=ca.cert.pem
+
+[slot.rootfs.0]
+device=/dev/vda2
+type=ext4
+bootname=A
+
+[slot.rootfs.1]
+device=/dev/vda3
+type=ext4
+bootname=B
+EOF
+
+    # 2. Install the certificate from the WORKDIR (where BitBake fetches it)
+    install -m 0644 ${WORKDIR}/ca.cert.pem ${D}${sysconfdir}/rauc/ca.cert.pem
+}
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/system-monitor/files/system-monitor.sh
+--------------------------------------------------
+#!/bin/sh
+
+# Wait for network
+sleep 5
+
+while true; do
+    # --- 1. EXISTING METRICS ---
+    # Clean up uptime to show just the load average part
+    # output example: " 13:23:05 up 1 min,  load average: 0.08, 0.01, 0.00"
+    LOAD_AVG=$(uptime | awk -F'load average:' '{ print $2 }')
+
+    # RAM
+    MEM_FREE=$(free | grep Mem | awk '{print $4}')
+
+    # Container Count
+    CONTAINER_COUNT=$(ctr tasks list 2>/dev/null | grep -c "RUNNING")
+
+    # --- 2. NEW METRICS ---
+
+    # Disk Usage of /data partition (Percentage used)
+    # df output example: "/dev/vda4      495.8M      2.3M    456.2M   1% /data"
+    DISK_USAGE=$(df /data | awk 'NR==2 {print $5}')
+
+    # IP Address (Get the IP of eth0)
+    IP_ADDR=$(ip -4 addr show eth0 | awk '/inet / {print $2}' | cut -d/ -f1)
+
+    # CPU Temp (Works on RPi, returns "N/A" on QEMU)
+    if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
+        # Convert millidegrees to degrees
+        TEMP_RAW=$(cat /sys/class/thermal/thermal_zone0/temp)
+        CPU_TEMP="$((TEMP_RAW / 1000))C"
+    else
+        CPU_TEMP="N/A (QEMU)"
+    fi
+
+    # --- 3. SEND LOG ---
+    # We organize it with clear tags |
+    LOG_MSG="IP: $IP_ADDR | Load: $LOAD_AVG | MemFree: ${MEM_FREE}K | Disk(/data): $DISK_USAGE | Temp: $CPU_TEMP | Containers: $CONTAINER_COUNT"
+
+    logger -t STATUS "$LOG_MSG"
+
+    sleep 10
+done
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-core/system-monitor/system-monitor.bb
+--------------------------------------------------
+SUMMARY = "System Monitor Heartbeat Logger"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+
+SRC_URI = "file://system-monitor.sh"
+
+S = "${WORKDIR}"
+
+do_install() {
+    # Install script to the system bin directory
+    install -d ${D}${bindir}
+    install -m 0755 ${WORKDIR}/system-monitor.sh ${D}${bindir}/
+}
+
+FILES:${PN} += "${bindir}/system-monitor.sh"
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-kernel/linux/files/minimal-strip.cfg
+--------------------------------------------------
+# ----------------------------------------
+# ❌ SUBSYSTEM KILL LIST (MODIFIED FOR CONTAINERS)
+# ----------------------------------------
+
+# --- KEEP NETWORKING (Required for Containers/OTA) ---
+CONFIG_NET=y
+CONFIG_INET=y
+# We still disable Wifi/BT to save space
+CONFIG_WIRELESS=n
+CONFIG_WLAN=n
+CONFIG_BT=n
+
+# --- KILL USB (Still dead) ---
+CONFIG_USB_SUPPORT=n
+CONFIG_USB=n
+
+# --- KILL INPUT/AUDIO (Still dead) ---
+CONFIG_INPUT=n
+CONFIG_SOUND=n
+CONFIG_DRM=n
+
+# ----------------------------------------
+# ✅ CONTAINER REQUIREMENTS
+# ----------------------------------------
+# Cgroups (Resource Isolation)
+CONFIG_CGROUPS=y
+CONFIG_MEMCG=y
+CONFIG_CGROUP_SCHED=y
+CONFIG_CGROUP_FREEZER=y
+CONFIG_CGROUP_DEVICE=y
+CONFIG_CGROUP_CPUACCT=y
+
+# Namespaces (Process Isolation)
+CONFIG_NAMESPACES=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_USER_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+
+# OverlayFS (Essential for container images)
+CONFIG_OVERLAY_FS=y
+
+# Networking for Containers (Virtual bridges)
+CONFIG_BRIDGE=y
+CONFIG_VETH=y
+CONFIG_NETFILTER=y
+CONFIG_IP_NF_FILTER=y
+CONFIG_IP_NF_TARGET_MASQUERADE=y
+CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/recipes-kernel/linux/linux-yocto_%.bbappend
+--------------------------------------------------
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+
+# 1. Apply our hard-stripping configuration
+SRC_URI += "file://minimal-strip.cfg"
+
+# 2. NUCLEAR OPTION: Remove standard QEMU hardware features
+# This stops Yocto from pulling in the "standard" USB and Network fragments
+# that were overwriting your config.
+KERNEL_FEATURES:remove = "features/net/net.scc"
+KERNEL_FEATURES:remove = "features/usb/usb-host.scc"
+KERNEL_FEATURES:remove = "features/usb/touchscreen-composite.scc"
+KERNEL_FEATURES:remove = "cfg/usb/mass-storage.scc"
+KERNEL_FEATURES:remove = "cfg/sound.scc"
+
+# 3. Ensure our config takes precedence
+# (We append a hook to cat our config onto the end of the generated .config
+#  just in case the merge logic is still being stubborn)
+do_configure:append() {
+    cat ${WORKDIR}/minimal-strip.cfg >> ${B}/.config
+}
+
+
+--------------------------------------------------
+FILE: meta-custom-minimal/wic/rauc-disk.wks
+--------------------------------------------------
+# short-description: Create a RAUC-compatible dual-partition disk image
+
+# 1. Boot Partition (Fat32) - Holds Kernel & Boot Script
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 64
+
+# 2. Slot A (Ext4) - The Active OS
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfs_A --align 4096 --size 512
+
+# 3. Slot B (Ext4) - The Backup/Update OS
+# We clone the rootfs here too so both slots start valid
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfs_B --align 4096 --size 512
+
+# 4. Data Partition (Ext4) - Persistent Data (Logs, Docker Images)
+part /data --ondisk mmcblk0 --fstype=ext4 --label data --align 4096 --size 512
+
+
+==========================================
+ FOLDER STRUCTURE: sources
+ (Content omitted for external layers)
+==========================================
+meta-openembedded/
+meta-rauc/
+meta-virtualization/
+
+--- Inside meta-openembedded ---
+contrib/
+COPYING.MIT
+meta-filesystems/
+meta-gnome/
+meta-initramfs/
+meta-multimedia/
+meta-networking/
+meta-oe/
+meta-perl/
+meta-python/
+meta-webserver/
+meta-xfce/
+README.md
